@@ -20,6 +20,10 @@ struct MyStruct
     HitPos boxHit;          //Current hit position
     int boxX, boxY;         //Box coordinates
     int FRM1;               //Frame
+    int bulletX, bulletY;   //Bullet coordinates
+
+    bool bulletActive = false;
+
 
     //int width, height, posX, posY;
     void Restart()
@@ -48,8 +52,7 @@ void ICGUI_Create()
 
 int keypressed = 0;
 ICBYTES map;
-HANDLE HMutex;
-int MutexFlag = 0;
+HANDLE HMutex = CreateMutex(NULL, FALSE, NULL);
 
 
 void* ShipThread(PVOID lpParam)
@@ -123,6 +126,8 @@ void* BoxThread(PVOID lpParam)
         Sleep(10);
         FillRect(map, data->boxX, data->boxY, 20, 20, 0);
     }
+
+
     return NULL;
 }
 
@@ -131,70 +136,97 @@ void* BulletThread(PVOID lpParam)
 
     MyStruct* data = (MyStruct*)lpParam;
 
-    int bulletX;
-    int bulletY;
-    bool bulletActive = false;
-
     DWORD dwWaitResult;
 
+    bool mutex = false;
 
     while (TRUE)
     {
-
-        dwWaitResult = WaitForSingleObject(
-            HMutex,    
-            INFINITE);
-        MutexFlag = 1;
-        //Fire the bullet
-        if (keypressed == 32 && !bulletActive)
+        //If bullet is not active, wait and continue
+        if (!data->bulletActive)
         {
-            bulletActive = true;
-            bulletX = data->shipX + 9;
-            bulletY = 580;
+            Sleep(30);
+            continue;
         }
 
-        if (bulletActive)
+        //Wait for mutex
+        if (!mutex)
         {
-            //Draw and move the bullet
-            FillRect(map, bulletX, bulletY, 3, 10, 0xFF0000);
-            DisplayImage(data->FRM1, map);
-            Sleep(20);
-            FillRect(map, bulletX, bulletY, 3, 10, 0);
+            mutex = true;
+            dwWaitResult = WaitForSingleObject(HMutex, INFINITE);
+        }
 
-            bulletY -= 15;
+        //Draw and move the bullet
+        FillRect(map, data->bulletX, data->bulletY, 3, 10, 0xFF0000);
+        DisplayImage(data->FRM1, map);
+        Sleep(20);
+        FillRect(map, data->bulletX, data->bulletY, 3, 10, 0);
 
-            //Check if the bullet in the screen  
-            if (bulletY < 0)
+        data->bulletY -= 15;
+
+        //Check if the bullet in the screen  
+        if (data->bulletY < 0)
+        {
+            data->bulletActive = false;
+            if (mutex)
             {
-                bulletActive = false;
-                keypressed = 0;
-
-            }
-
-            //Check if the bullet hit 
-            if (bulletY - 20 < data->boxY && data->boxHit == None)
-            {
-                if (bulletX >= data->boxX && bulletX <= data->boxX + 5)
-                {
-                    data->boxHit = Right;
-                }
-                if (bulletX >= data->boxX + 6 && bulletX <= data->boxX + 13)
-                {
-                    data->boxHit = Middle;
-                }
-                if (bulletX >= data->boxX + 14 && bulletX <= data->boxX + 20)
-                {
-                    data->boxHit = Left;
-                }
-
+                mutex = false;
+                ReleaseMutex(HMutex);
             }
         }
-        ReleaseMutex(HMutex);
-        MutexFlag = 0; 
+
+        //Check if the bullet hit 
+        if (data->bulletY - 20 < data->boxY && data->boxHit == None)
+        {
+            if (data->bulletX >= data->boxX && data->bulletX <= data->boxX + 5)
+            {
+                data->boxHit = Right;
+            }
+            if (data->bulletX >= data->boxX + 6 && data->bulletX <= data->boxX + 13)
+            {
+                data->boxHit = Middle;
+            }
+            if (data->bulletX >= data->boxX + 14 && data->bulletX <= data->boxX + 20)
+            {
+                data->boxHit = Left;
+            }
+
+        }
     }
-
 }
 
+
+void* BulletChecker(PVOID lpParam)
+{
+    MyStruct* data = (MyStruct*)lpParam;
+
+    DWORD dwWaitResult;
+
+    while (true)
+    {
+        //Fire the bullet
+        if (keypressed == 32)
+        {
+            keypressed = 0;
+
+            //Wait 200 ms for mutex
+            dwWaitResult = WaitForSingleObject(HMutex, 200);
+
+            //If mutex is available
+            if (dwWaitResult == WAIT_OBJECT_0)
+            {
+                //Fire the bullet
+                data->bulletActive = true;
+                data->bulletX = data->shipX + 9;
+                data->bulletY = 580;
+
+                //Release the mutex
+                ReleaseMutex(HMutex);
+            }
+
+        }
+    }
+}
 
 
 
@@ -216,21 +248,24 @@ void ICGUI_main()
 void Start(void* arg)
 {
 
-
     MyStruct* data = (MyStruct*)arg;
 
     SetFocus(ICG_GetMainWindow());
 
     //Init Game Data
-    ((MyStruct*)arg)->Restart();
+    data->Restart();
 
     //Init Game Screen
     CreateImage(map, 560, 620, ICB_UINT);
-    
+
+    DWORD dwWaitResult;
+
     //All Threads
     CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)ShipThread, arg, 0, 0);
     CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)BulletThread, arg, 0, 0);
     CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)BoxThread, arg, 0, 0);
-  
+    CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)BulletChecker, arg, 0, 0);
+
+
 
 }
